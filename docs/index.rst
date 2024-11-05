@@ -1,4 +1,4 @@
-MQTT state-machine protocol (mqttpproto)
+MQTT state-machine protocol (mqttproto)
 ========================================
 
 .. include:: ../README.rst
