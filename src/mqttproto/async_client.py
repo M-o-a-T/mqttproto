@@ -630,5 +630,5 @@ class AsyncMQTTClient:
                 await self._run_operation(subscribe_op)
 
             # Set up an unsubscribe operation when the async context manager is exited
-            exit_stack.push_async_callback(unsubscribe, subscr_id)
+            exit_stack.push_async_callback(unsubscribe)
             yield subscription
