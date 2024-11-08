@@ -445,6 +445,7 @@ class Subscription:
     retain_handling: RetainHandling = field(
         kw_only=True, default=RetainHandling.SEND_RETAINED
     )
+    subscription_id: int | None = field(kw_only=True, default=None)
     group_id: str | None = field(init=False, default=None)
     _parts: tuple[str, ...] = field(init=False, repr=False, eq=False)
 
