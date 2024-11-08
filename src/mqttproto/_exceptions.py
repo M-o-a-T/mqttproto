@@ -10,6 +10,13 @@ class MQTTException(Exception):
     """Base class for all MQTT exceptions."""
 
 
+class MQTTDuplicateSubscription(Exception):
+    """
+    Raised when a client tries to subscribe to a pattern that
+    it already subscribed to.
+    """
+
+
 class MQTTPacketTooLarge(MQTTException):
     """
     Raised when encoding or decoding a packet, and its size exceeds the configured
