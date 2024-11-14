@@ -487,7 +487,7 @@ class AsyncMQTTClient:
         stream: ByteStream
         assert self.host_or_path
         ssl_context = self.ssl if isinstance(self.ssl, SSLContext) else None
-        for attempt in stamina.retry_context(on=(OSError, SSLError)):
+        async for attempt in stamina.retry_context(on=(OSError, SSLError)):
             with attempt:
                 if self.transport == "unix":
                     stream = await connect_unix(self.host_or_path)
@@ -521,7 +521,7 @@ class AsyncMQTTClient:
 
         # MQTT-6.0.0-3
         async with AsyncClient(verify=self.ssl) as client:
-            for attempt in stamina.retry_context(on=(OSError, SSLError)):
+            async for attempt in stamina.retry_context(on=(OSError, SSLError)):
                 with attempt:
                     async with aconnect_ws(uri, client=client, subprotocols=["mqtt"]) as session:
                         yield MQTTWebsocketStream(session), (WebSocketNetworkError,)
