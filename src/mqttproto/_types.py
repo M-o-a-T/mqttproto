@@ -445,20 +445,8 @@ class Will(PropertiesMixin):
 
 
 @define(eq=False)
-class Subscription:
-    QOS_MASK = 3
-    NO_LOCAL_FLAG = 4
-    RETAIN_AS_PUBLISHED_FLAG = 8
-    RETAIN_HANDLING_MASK = 48
-
+class Pattern:
     pattern: str
-    max_qos: QoS = field(kw_only=True, default=QoS.EXACTLY_ONCE)
-    no_local: bool = field(kw_only=True, default=False)
-    retain_as_published: bool = field(kw_only=True, default=True)
-    retain_handling: RetainHandling = field(
-        kw_only=True, default=RetainHandling.SEND_RETAINED
-    )
-    subscription_id: int = field(kw_only=True, default=0)
     group_id: str | None = field(init=False, default=None)
     _parts: tuple[str, ...] = field(init=False, repr=False, eq=False)
     _prefix: str | None = field(init=False, repr=False, eq=False)
@@ -521,42 +509,15 @@ class Subscription:
         self._parts = parts[n_chop:]
 
     def __eq__(self, other: object) -> bool:
-        if isinstance(other, Subscription):
+        if isinstance(other, Pattern):
             return self.pattern == other.pattern
+        if isinstance(other, str):
+            return self.pattern == other
 
         return NotImplemented
 
     def __hash__(self) -> int:
         return hash(self.pattern)
-
-    @classmethod
-    def decode(cls, data: memoryview) -> tuple[memoryview, Subscription]:
-        data, pattern = decode_utf8(data)
-        data, options = decode_fixed_integer(data, 1)
-        qos = QoS.get(options & cls.QOS_MASK)
-        no_local = bool(options & cls.NO_LOCAL_FLAG)
-        retain_as_published = bool(options & cls.RETAIN_AS_PUBLISHED_FLAG)
-        retain_handling = RetainHandling.get((options & cls.RETAIN_HANDLING_MASK) >> 4)
-        return data, Subscription(
-            pattern=pattern,
-            max_qos=qos,
-            no_local=no_local,
-            retain_as_published=retain_as_published,
-            retain_handling=retain_handling,
-        )
-
-    def encode(self, buffer: bytearray, max_qos: QoS | None = None) -> None:
-        encode_utf8(self.pattern, buffer)
-        options = (
-            max_qos if max_qos is not None else self.max_qos
-        ) | self.retain_handling << 4
-        if self.no_local:
-            options |= self.NO_LOCAL_FLAG
-
-        if self.retain_as_published:
-            options |= self.RETAIN_AS_PUBLISHED_FLAG
-
-        encode_fixed_integer(options, buffer, 1)
 
     def matches(self, publish: MQTTPublishPacket) -> bool:
         """
@@ -606,6 +567,80 @@ class Subscription:
                 return False
 
         return True
+
+
+@define(eq=False)
+class Subscription:
+    QOS_MASK = 3
+    NO_LOCAL_FLAG = 4
+    RETAIN_AS_PUBLISHED_FLAG = 8
+    RETAIN_HANDLING_MASK = 48
+
+    pattern: str | Pattern
+    max_qos: QoS = field(kw_only=True, default=QoS.EXACTLY_ONCE)
+    no_local: bool = field(kw_only=True, default=False)
+    retain_as_published: bool = field(kw_only=True, default=True)
+    retain_handling: RetainHandling = field(
+        kw_only=True, default=RetainHandling.SEND_RETAINED
+    )
+    subscription_id: int = field(kw_only=True, default=0)
+
+    def __attrs_post_init__(self) -> None:
+        if isinstance(self.pattern, str):
+            self.pattern = Pattern(self.pattern)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Subscription):
+            return self.pattern == other.pattern
+
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.pattern)
+
+    @property
+    def group_id(self):
+        return self.pattern.group_id
+
+    @classmethod
+    def decode(cls, data: memoryview) -> tuple[memoryview, Subscription]:
+        data, pattern = decode_utf8(data)
+        data, options = decode_fixed_integer(data, 1)
+        qos = QoS.get(options & cls.QOS_MASK)
+        no_local = bool(options & cls.NO_LOCAL_FLAG)
+        retain_as_published = bool(options & cls.RETAIN_AS_PUBLISHED_FLAG)
+        retain_handling = RetainHandling.get((options & cls.RETAIN_HANDLING_MASK) >> 4)
+        return data, Subscription(
+            pattern=pattern,
+            max_qos=qos,
+            no_local=no_local,
+            retain_as_published=retain_as_published,
+            retain_handling=retain_handling,
+        )
+
+    def encode(self, buffer: bytearray, max_qos: QoS | None = None) -> None:
+        encode_utf8(self.pattern.pattern, buffer)
+        options = (
+            max_qos if max_qos is not None else self.max_qos
+        ) | self.retain_handling << 4
+        if self.no_local:
+            options |= self.NO_LOCAL_FLAG
+
+        if self.retain_as_published:
+            options |= self.RETAIN_AS_PUBLISHED_FLAG
+
+        encode_fixed_integer(options, buffer, 1)
+
+    def matches(self, publish: MQTTPublishPacket) -> bool:
+        """
+        Check if a published message matches this subscription.
+
+        :param publish: an MQTT ``PUBLISH`` packet
+        :return: ``True`` if the published message matches this pattern, ``False`` if
+            not
+
+        """
+        return self.pattern.matches(publish)
 
 
 class MQTTPacket(metaclass=ABCMeta):
@@ -1379,7 +1414,7 @@ class MQTTUnsubscribePacket(MQTTPacket, PropertiesMixin):
 
         # Encode the payload
         for pattern in self.patterns:
-            encode_utf8(pattern, internal_buffer)
+            encode_utf8(pattern.pattern, internal_buffer)
 
         # Encode the fixed header
         self.encode_fixed_header(self.expected_reserved_bits, internal_buffer, buffer)
