@@ -275,7 +275,6 @@ class AsyncMQTTClient:
     )
     keep_alive: int = field(kw_only=True, validator=[ge(0), le(65535)], default=0)
 
-    _exit_stack: AsyncExitStack = field(init=False)
     _closed: bool = field(init=False, default=False)
     _state_machine: MQTTClientStateMachine = field(init=False)
     _subscribe_lock: Lock = field(init=False, factory=Lock)
@@ -289,6 +288,7 @@ class AsyncMQTTClient:
     _pending_operations: dict[int, MQTTOperation[Any]] = field(init=False, factory=dict)
     _did_send: Event = field(init=False, factory=Event)
     _keepalive_task: CancelScope | None = field(init=False, default=None)
+    __ctx: Any = field(init=False, default=None)
 
     def __attrs_post_init__(self) -> None:
         if not self.host_or_path:
@@ -316,31 +316,29 @@ class AsyncMQTTClient:
     def may_subscription_id(self) -> bool:
         return self._state_machine.may_subscription_id
 
-    async def __aenter__(self) -> Self:
-        async with AsyncExitStack() as exit_stack:
-            task_group = await exit_stack.enter_async_context(create_task_group())
+
+    async def __aenter__(self):
+        self.__ctx = ctx = self._ctx()  # pylint: disable=E1101,W0201
+        return await ctx.__aenter__()
+
+    def __aexit__(self, *tb):
+        return self.__ctx.__aexit__(*tb)
+
+    @asynccontextmanager
+    async def _ctx(self) -> Self:
+        async with create_task_group() as task_group:
             await task_group.start(self._manage_connection)
-            self._exit_stack = exit_stack.pop_all()
+            try:
+                yield self
+            except BaseException:
+                await self._stream.aclose()
+                raise
+            else:
+                self._state_machine.disconnect()
+                operation = MQTTDisconnectOperation()
+                await self._run_operation(operation)
 
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> bool | None:
-        self._closed = True
-
-        if exc_val is None:
-            self._state_machine.disconnect()
-            operation = MQTTDisconnectOperation()
-            await self._run_operation(operation)
-            await self._stream.aclose()
-        else:
-            await self._stream.aclose()
-
-        return await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
+                await self._stream.aclose()
 
     async def _manage_connection(
         self,
@@ -355,12 +353,14 @@ class AsyncMQTTClient:
             else:
                 cm = self._connect_mqtt()
 
-            async with AsyncExitStack() as exit_stack:
-                stream, ignored_exc_classes = await exit_stack.enter_async_context(cm)
+            async with (
+                    cm as s_ixc,
+                    create_task_group() as task_group,
+                ):
+                stream, ignored_exc_classes = s_ixc
                 self._stream = stream
 
                 # Start handling inbound packets
-                task_group = await exit_stack.enter_async_context(create_task_group())
                 task_group.start_soon(
                     self._read_inbound_packets, stream, ignored_exc_classes
                 )
@@ -520,15 +520,11 @@ class AsyncMQTTClient:
         uri = f"{scheme}://{self.host_or_path}:{self.port}{self.websocket_path}"
 
         # MQTT-6.0.0-3
-        async with AsyncExitStack() as exit_stack:
-            client = await exit_stack.enter_async_context(AsyncClient(verify=self.ssl))
+        async with AsyncClient(verify=self.ssl) as client:
             for attempt in stamina.retry_context(on=(OSError, SSLError)):
                 with attempt:
-                    session = await exit_stack.enter_async_context(
-                        aconnect_ws(uri, client=client, subprotocols=["mqtt"])
-                    )
-                    yield MQTTWebsocketStream(session), (WebSocketNetworkError,)
-                    return
+                    async with aconnect_ws(uri, client=client, subprotocols=["mqtt"]) as session:
+                        yield MQTTWebsocketStream(session), (WebSocketNetworkError,)
 
     async def _flush_outbound_data(self) -> None:
         self._did_send.set()
