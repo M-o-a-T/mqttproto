@@ -520,7 +520,9 @@ class AsyncMQTTClient:
         async with AsyncClient(verify=self.ssl) as client:
             async for attempt in stamina.retry_context(on=(OSError, SSLError)):
                 with attempt:
-                    async with aconnect_ws(uri, client=client, subprotocols=["mqtt"]) as session:
+                    async with aconnect_ws(
+                        uri, client=client, subprotocols=["mqtt"]
+                    ) as session:
                         yield MQTTWebsocketStream(session), (WebSocketNetworkError,)
 
     async def _flush_outbound_data(self) -> None:
