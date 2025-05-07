@@ -72,18 +72,17 @@ class BaseMQTTClientStateMachine:
 
     def _handle_packet(self, packet: MQTTPacket) -> bool:
         if isinstance(packet, MQTTPublishPacket):
-            self._in_require_state(packet, MQTTClientState.CONNECTED)
             if not self._add_pending_packet(packet, local=False):
                 return True
 
-            if packet.packet_id and self._auto_ack_publishes:
+            if self._state == MQTTClientState.CONNECTED and packet.packet_id and self._auto_ack_publishes:
                 self.acknowledge_publish(packet.packet_id, ReasonCode.SUCCESS)
         elif isinstance(packet, MQTTPublishAckPacket):
             self._in_require_state(packet, MQTTClientState.CONNECTED)
             publish = self._pop_pending_packet(
                 packet.packet_id, MQTTPublishPacket, local=True
             )
-            if publish and publish.qos is not QoS.AT_LEAST_ONCE:
+            if publish and publish.qos != QoS.AT_LEAST_ONCE:
                 raise MQTTProtocolError(
                     f"received unexpected {packet.packet_type._name_} for a QoS "
                     f"{int(publish.qos)} publish packet"
@@ -97,7 +96,7 @@ class BaseMQTTClientStateMachine:
                 local=True,
             )
             if publish:
-                if publish.qos is not QoS.EXACTLY_ONCE:
+                if publish.qos != QoS.EXACTLY_ONCE:
                     raise MQTTProtocolError(
                         f"received unexpected {publish.packet_type._name_} for a QoS "
                         f"{int(publish.qos)} publish packet"
@@ -125,7 +124,7 @@ class BaseMQTTClientStateMachine:
                 local=False,
             )
             if publish:
-                if publish.qos is not QoS.EXACTLY_ONCE:
+                if publish.qos != QoS.EXACTLY_ONCE:
                     raise MQTTProtocolError(
                         f"received unexpected {publish.packet_type._name_} for a QoS "
                         f"{int(publish.qos)} publish packet"
@@ -149,7 +148,7 @@ class BaseMQTTClientStateMachine:
                 packet.packet_id, MQTTPublishPacket, local=True
             )
             if publish:
-                if publish.qos is not QoS.EXACTLY_ONCE:
+                if publish.qos != QoS.EXACTLY_ONCE:
                     raise MQTTProtocolError(
                         f"received unexpected {publish.packet_type._name_} for a QoS "
                         f"{int(publish.qos)} publish packet"
@@ -221,7 +220,7 @@ class BaseMQTTClientStateMachine:
         )
         if pending.setdefault(packet.packet_id, packet) is not packet:
             if isinstance(packet, MQTTPublishPacket):
-                if packet.qos is QoS.AT_LEAST_ONCE:
+                if packet.qos == QoS.AT_LEAST_ONCE:
                     response = MQTTPublishAckPacket(
                         reason_code=ReasonCode.PACKET_IDENTIFIER_IN_USE,
                         packet_id=packet.packet_id,
@@ -315,7 +314,7 @@ class BaseMQTTClientStateMachine:
                     f"received unexpected {packet.packet_type._name_} packet"
                 )
 
-            logger.debug("Received packet from broker: %r", packet)
+            logger.debug("IN : %r", packet)
             received_packets.append(packet)
 
         cutoff_offset = len(self._in_buffer) - len(view)
@@ -336,7 +335,7 @@ class BaseMQTTClientStateMachine:
                 f"that was either never received or has already been acknowledged"
             )
 
-        if request.qos is QoS.AT_LEAST_ONCE:
+        if request.qos == QoS.AT_LEAST_ONCE:
             MQTTPublishAckPacket(reason_code=reason_code, packet_id=packet_id).encode(
                 self._out_buffer
             )
@@ -361,7 +360,7 @@ class BaseMQTTClientStateMachine:
                     f"that was either never received or has already been completed"
                 )
 
-            if request.qos is not QoS.EXACTLY_ONCE:
+            if request.qos != QoS.EXACTLY_ONCE:
                 raise MQTTProtocolError("attempted to release a QoS 1 publish")
 
             if request.ack_state is not PublishAckState.ACKNOWLEDGED:
@@ -389,7 +388,7 @@ class BaseMQTTClientStateMachine:
                     f"that was either never received or has already been completed"
                 )
 
-            if request.qos is not QoS.EXACTLY_ONCE:
+            if request.qos != QoS.EXACTLY_ONCE:
                 raise MQTTProtocolError(
                     "attempted to send a QoS 2 completion for a QoS 1 publish"
                 )
